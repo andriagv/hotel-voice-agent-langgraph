@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional, Dict, Any
+from typing import Annotated, List, Optional
 from typing_extensions import TypedDict
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -8,5 +8,7 @@ class HotelAgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     room_number: Optional[str]
     guest_name: Optional[str]
-    pending_order: Optional[Dict[str, Any]]
-    tool_error_count: int  # ინახავს tool-ის ერორების რაოდენობას
+
+    # ქვემოთ მოცემული მთვლელები ყოველ ახალ შეკითხვაზე ნულდება (input_guard)
+    tool_error_count: int            # tool-ის ჩავარდნების რაოდენობა
+    agent_steps: int                 # LLM-ის გამოძახებები ამ შეკითხვაზე (ციკლის ლიმიტი)

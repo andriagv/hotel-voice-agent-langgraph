@@ -1,12 +1,19 @@
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, ToolMessage, SystemMessage
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, START, END
 from src.state import HotelAgentState
 from src.tools import order_room_service, get_wifi_info, MAX_QUANTITY
 
 # ANTHROPIC_API_KEY-ს ვკითხულობთ .env ფაილიდან (ან გარემოს ცვლადიდან)
 load_dotenv()
+
+# --- ლიმიტები (ერთ შეკითხვაზე) ---
+MAX_TOOL_ERRORS = 2       # tool-ის ჩავარდნები, სანამ ადამიანზე გადავალთ
+MAX_AGENT_STEPS = 6       # LLM-ის გამოძახებები: იცავს უსასრულო ციკლისგან
+MAX_INPUT_CHARS = 800     # ხმოვანი ტრანსკრიპტი ამაზე გრძელი არ უნდა იყოს
+
+ESCALATION_TEXT = "ბოდიშს გიხდით, სისტემასთან კავშირი შეფერხდა. თქვენს ზარს გადავამისამართებ სასტუმროს ადმინისტრატორთან."
 
 # 1. LLM და Tool-ების დაკავშირება
 tools = [order_room_service, get_wifi_info]
@@ -31,11 +38,22 @@ SYSTEM_PROMPT = f"""შენ ხარ ქართულენოვანი 
 
 # --- კვანძები (NODES) ---
 
+def input_guard_node(state: HotelAgentState):
+    """ყოველი ახალი შეკითხვის შესასვლელი: ნულავს მთვლელებს და ბლოკავს არავალიდურ შეტანას"""
+    reset = {"tool_error_count": 0, "agent_steps": 0}
+    text = state["messages"][-1].text.strip()
+
+    if not text:
+        return {**reset, "messages": [AIMessage(content="ბოდიში, ვერ გაგიგეთ. გაიმეორებთ?")]}
+    if len(text) > MAX_INPUT_CHARS:
+        return {**reset, "messages": [AIMessage(content="ბოდიში, მოთხოვნა ძალიან გრძელია. მოკლედ მითხარით, რით დაგეხმაროთ?")]}
+    return reset
+
 def agent_node(state: HotelAgentState):
     """LLM იღებს გადაწყვეტილებას"""
     messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
     response = llm.invoke(messages)
-    return {"messages": [response]}
+    return {"messages": [response], "agent_steps": state.get("agent_steps", 0) + 1}
 
 def tool_node(state: HotelAgentState):
     """Tool-ების გაშვება და შეცდომების (Error) დაჭერა"""
@@ -74,24 +92,38 @@ def tool_node(state: HotelAgentState):
 
 def human_escalation_node(state: HotelAgentState):
     """როცა შეცდომა მეორდება, ზარი გადადის ადამიანთან"""
+    messages = []
+
+    # API-ს სჭირდება პასუხი ყველა tool_call-ზე, თორემ შემდეგი შეკითხვა ჩავარდება
+    last_message = state["messages"][-1]
+    for tool_call in getattr(last_message, "tool_calls", None) or []:
+        messages.append(ToolMessage(content="გაუქმდა: საუბარი გადაეცა ადმინისტრატორს.", tool_call_id=tool_call["id"]))
+
     # ფიქსირებული ტექსტი: LLM-ის გამოძახება აქ ზედმეტია (დაყოვნება + ისევ ჩავარდნის რისკი)
-    msg = AIMessage(
-        content="ბოდიშს გიხდით, სისტემასთან კავშირი შეფერხდა. თქვენს ზარს გადავამისამართებ სასტუმროს ადმინისტრატორთან."
-    )
-    return {"messages": [msg]}
+    messages.append(AIMessage(content=ESCALATION_TEXT))
+    return {"messages": messages}
 
 # --- პირობითი ლოგიკა (CONDITIONAL EDGES) ---
+
+def route_after_guard(state: HotelAgentState):
+    # თუ guard-მა თვითონ უპასუხა (არავალიდური შეტანა), LLM-მდე არ მივდივართ
+    if isinstance(state["messages"][-1], AIMessage):
+        return END
+    return "agent"
 
 def route_after_agent(state: HotelAgentState):
     last_message = state["messages"][-1]
     # თუ LLM-ს უნდა ხელსაწყოს გამოყენება
     if last_message.tool_calls:
+        # ციკლის ლიმიტი: LLM ხელსაწყოებს გაუთავებლად ვერ გამოიძახებს
+        if state.get("agent_steps", 0) >= MAX_AGENT_STEPS:
+            return "human_escalation"
         return "tools"
     return END
 
 def route_after_tools(state: HotelAgentState):
     # თუ შეცდომები დაგროვდა (მაგ: 2 ან მეტი ჩავარდნა)
-    if state.get("tool_error_count", 0) >= 2:
+    if state.get("tool_error_count", 0) >= MAX_TOOL_ERRORS:
         return "human_escalation"
     # სხვა შემთხვევაში ვაბრუნებთ აგენტთან, რომ შედეგი შეაფასოს
     return "agent"
@@ -99,14 +131,21 @@ def route_after_tools(state: HotelAgentState):
 # --- გრაფის აწყობა ---
 builder = StateGraph(HotelAgentState)
 
+builder.add_node("input_guard", input_guard_node)
 builder.add_node("agent", agent_node)
 builder.add_node("tools", tool_node)
 builder.add_node("human_escalation", human_escalation_node)
 
-builder.set_entry_point("agent")
+builder.add_edge(START, "input_guard")
+
+builder.add_conditional_edges("input_guard", route_after_guard, {
+    "agent": "agent",
+    END: END
+})
 
 builder.add_conditional_edges("agent", route_after_agent, {
     "tools": "tools",
+    "human_escalation": "human_escalation",
     END: END
 })
 
