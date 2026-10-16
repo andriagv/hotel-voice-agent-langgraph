@@ -1,9 +1,12 @@
-import os
+from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import ToolMessage, SystemMessage
+from langchain_core.messages import AIMessage, ToolMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from src.state import HotelAgentState
 from src.tools import order_room_service, get_wifi_info
+
+# GOOGLE_API_KEY-ს ვკითხულობთ .env ფაილიდან
+load_dotenv()
 
 # 1. LLM და Tool-ების დაკავშირება
 tools = [order_room_service, get_wifi_info]
@@ -39,6 +42,9 @@ def tool_node(state: HotelAgentState):
         selected_tool = tools_by_name.get(tool_name)
         
         try:
+            if selected_tool is None:
+                raise ValueError(f"უცნობი ხელსაწყო: '{tool_name}'")
+            
             # ვცდილობთ Tool-ის გაშვებას
             observation = selected_tool.invoke(tool_args)
             new_messages.append(
@@ -56,11 +62,11 @@ def tool_node(state: HotelAgentState):
 
 def human_escalation_node(state: HotelAgentState):
     """როცა შეცდომა მეორდება, ზარი გადადის ადამიანთან"""
-    msg = SystemMessage(
-        content="სისტემური შეფერხებაა. გთხოვთ, სტუმარს უთხრათ: 'ბოდიშს გიხდით, სისტემასთან კავშირი შეფერხდა. თქვენს ზარს გადავამისამართებ სასტუმროს ადმინისტრატორთან.'"
+    # ფიქსირებული ტექსტი: LLM-ის გამოძახება აქ ზედმეტია (დაყოვნება + ისევ ჩავარდნის რისკი)
+    msg = AIMessage(
+        content="ბოდიშს გიხდით, სისტემასთან კავშირი შეფერხდა. თქვენს ზარს გადავამისამართებ სასტუმროს ადმინისტრატორთან."
     )
-    res = llm.invoke([msg])
-    return {"messages": [res]}
+    return {"messages": [msg]}
 
 # --- პირობითი ლოგიკა (CONDITIONAL EDGES) ---
 
