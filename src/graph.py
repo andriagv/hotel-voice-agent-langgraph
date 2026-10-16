@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage, SystemMessage
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import interrupt
 from src.state import HotelAgentState
 from src.tools import order_room_service, get_wifi_info, ROOM_SERVICE_MENU, MAX_QUANTITY
 
@@ -44,6 +46,7 @@ SYSTEM_PROMPT = f"""შენ ხარ ქართულენოვანი 
 - ისაუბრე 1-3 მოკლე წინადადებით, markdown-ის, სიების და ემოჯების გარეშე.
 - ნომრის სერვისის მენიუ: {", ".join(ROOM_SERVICE_MENU)}. სხვა კერძი არ შესთავაზო.
 - არ მოიგონო ფაქტები (მიტანის დრო, ფასები, სერვისები). თუ არ იცი, თქვი, რომ რეცეფცია დააზუსტებს.
+- შეკვეთისთვის პირდაპირ გამოიძახე ხელსაწყო: სისტემა სტუმარს დადასტურებას თავად სთხოვს.
 - ერთ შეკვეთაში მაქსიმუმ {MAX_QUANTITY} ერთეულია. თუ სტუმარი მეტს ითხოვს, ჯერ აუხსენი ლიმიტი და ჰკითხე.
 - შეკვეთა ყოველთვის სტუმრის საკუთარ ოთახში მიდის, სხვა ოთახში შეკვეთა შეუძლებელია.
 - თუ ხელსაწყომ დააბრუნა შეცდომა, თავაზიანად აუხსენი სტუმარს და შესთავაზე ალტერნატივა მენიუდან.
@@ -78,6 +81,26 @@ def agent_node(state: HotelAgentState):
     response = llm.invoke(messages)
     return {"messages": [response], "agent_steps": state.get("agent_steps", 0) + 1}
 
+def _confirm_order(tool_call: dict, room_number: str) -> bool:
+    """Human-in-the-loop: გრაფი ჩერდება და სტუმარს დადასტურებას სთხოვს"""
+    args = tool_call["args"]
+    item = str(args.get("item", "")).strip().lower()
+    quantity = args.get("quantity", 1)
+
+    # არავალიდურ შეკვეთაზე დადასტურებას არ ვითხოვთ: ხელსაწყო თვითონ დააბრუნებს შეცდომას
+    if item not in ROOM_SERVICE_MENU or not isinstance(quantity, int) or not 1 <= quantity <= MAX_QUANTITY:
+        return True
+
+    total = ROOM_SERVICE_MENU[item] * quantity
+    answer = interrupt({
+        "type": "confirm_order",
+        "item": item,
+        "quantity": quantity,
+        "total": total,
+        "question": f"ვადასტურებ: {quantity} {item} ოთახ {room_number}-ში, ჯამში {total:g} ლარი. გავაფორმო შეკვეთა?",
+    })
+    return answer is True
+
 def tool_node(state: HotelAgentState):
     """Tool-ების გაშვება და შეცდომების (Error) დაჭერა"""
     last_message = state["messages"][-1]
@@ -85,10 +108,25 @@ def tool_node(state: HotelAgentState):
     error_count = state.get("tool_error_count", 0)
     room_number = state.get("room_number") or "უცნობი"
 
+    # ჯერ ყველა შეკვეთის დადასტურებას ვიღებთ და მერე ვუშვებთ ხელსაწყოებს:
+    # interrupt-ის შემდეგ კვანძი თავიდან ეშვება და ასე არაფერი შესრულდება ორჯერ
+    confirmed = {
+        tool_call["id"]: _confirm_order(tool_call, room_number)
+        for tool_call in last_message.tool_calls
+        if tool_call["name"] == "order_room_service"
+    }
+
     for tool_call in last_message.tool_calls:
         tool_name = tool_call["name"]
         tool_args = dict(tool_call["args"])
         selected_tool = tools_by_name.get(tool_name)
+
+        if confirmed.get(tool_call["id"]) is False:
+            new_messages.append(ToolMessage(
+                content="სტუმარმა შეკვეთა არ დაადასტურა, შეკვეთა არ გაფორმებულა.",
+                tool_call_id=tool_call["id"],
+            ))
+            continue
 
         try:
             if selected_tool is None:
@@ -275,5 +313,6 @@ builder.add_conditional_edges("verifier", route_after_verifier, {
 
 builder.add_edge("human_escalation", END)
 
-# გრაფის დაკომპილირება
-hotel_graph = builder.compile()
+# გრაფის დაკომპილირება მეხსიერებით: საუბარი ინახება thread_id-ის მიხედვით
+# (InMemorySaver პროცესის გათიშვისას იშლება; პროდაქშენში SQLite/Postgres checkpointer)
+hotel_graph = builder.compile(checkpointer=InMemorySaver())
