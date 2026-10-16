@@ -1,20 +1,25 @@
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, ToolMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from src.state import HotelAgentState
 from src.tools import order_room_service, get_wifi_info
 
-# GOOGLE_API_KEY-ს ვკითხულობთ .env ფაილიდან
+# ANTHROPIC_API_KEY-ს ვკითხულობთ .env ფაილიდან (ან გარემოს ცვლადიდან)
 load_dotenv()
 
 # 1. LLM და Tool-ების დაკავშირება
 tools = [order_room_service, get_wifi_info]
 tools_by_name = {t.name: t for t in tools}
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0
+llm = ChatAnthropic(
+    model="claude-opus-5",
+    max_tokens=4096,
+    # ხმოვანი რეჟიმი: დაბალი effort = ნაკლები ფიქრი და სწრაფი პირველი პასუხი
+    output_config={"effort": "low"},
+    # თუ მოდელი მოთხოვნაზე უარს იტყვის (refusal), API ავტომატურად სცდის სათადარიგო მოდელს
+    betas=["server-side-fallback-2026-07-01"],
+    model_kwargs={"fallbacks": "default"},
 ).bind_tools(tools)
 
 SYSTEM_PROMPT = """შენ ხარ ქართულენოვანი სასტუმროს ხმოვანი ასისტენტი.

@@ -21,10 +21,11 @@ def stream_sentences(user_text: str, room_number: str = "304") -> Iterator[str]:
         # მხოლოდ სტუმრისთვის განკუთვნილი ტექსტი (Tool-ის შედეგები არ უნდა გაჟღერდეს)
         if metadata.get("langgraph_node") not in ("agent", "human_escalation"):
             continue
-        if not isinstance(msg_chunk.content, str) or not msg_chunk.content:
+        # .text აბრუნებს მხოლოდ ტექსტურ ბლოკებს (thinking და tool_use ბლოკები გამოტოვებულია)
+        if not msg_chunk.text:
             continue
 
-        buffer += msg_chunk.content
+        buffer += msg_chunk.text
 
         # ერთ chunk-ში შეიძლება რამდენიმე წინადადება დასრულდეს
         *complete, buffer = SENTENCE_END.split(buffer)

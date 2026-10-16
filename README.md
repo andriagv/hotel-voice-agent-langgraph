@@ -1,4 +1,4 @@
-# 🏨 Hotel Voice Agent (LangGraph + Gemini)
+# 🏨 Hotel Voice Agent (LangGraph + Claude)
 
 ქართულენოვანი სასტუმროს ხმოვანი ასისტენტი, აგებული **LangGraph**-ზე:
 Tool-ების გამოძახება (PMS), შეცდომების უსაფრთხო დამუშავება, ადამიანთან გადამისამართება (Human Escalation) და წინადადებების დონეზე სტრიმინგი TTS-ისთვის.
@@ -28,7 +28,7 @@ graph TD;
 ```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # ჩაწერეთ თქვენი GOOGLE_API_KEY
+cp .env.example .env   # ჩაწერეთ თქვენი ANTHROPIC_API_KEY
 
 python -m src.voice_pipeline
 ```
