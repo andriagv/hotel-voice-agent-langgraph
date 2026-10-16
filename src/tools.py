@@ -15,7 +15,7 @@ def order_room_service(item: str, quantity: int = 1) -> str:
     
     # სპეციალურად ჩავაშენოთ შეცდომის ლოგიკა ტესტირებისთვის
     if "ხინკალი" in item_clean:
-        raise ValueError("შეცდომა: 'ხინკალი' არ არის ნომრის სერვისის მენიუში.")
+        raise ValueError(f"შეცდომა: 'ხინკალი' არ არის ნომრის სერვისის მენიუში. ხელმისაწვდომია: {list(ROOM_SERVICE_MENU.keys())}")
     
     if item_clean in ROOM_SERVICE_MENU:
         price = ROOM_SERVICE_MENU[item_clean] * quantity
