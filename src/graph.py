@@ -3,7 +3,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, ToolMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from src.state import HotelAgentState
-from src.tools import order_room_service, get_wifi_info
+from src.tools import order_room_service, get_wifi_info, MAX_QUANTITY
 
 # ANTHROPIC_API_KEY-ს ვკითხულობთ .env ფაილიდან (ან გარემოს ცვლადიდან)
 load_dotenv()
@@ -22,10 +22,12 @@ llm = ChatAnthropic(
     model_kwargs={"fallbacks": "default"},
 ).bind_tools(tools)
 
-SYSTEM_PROMPT = """შენ ხარ ქართულენოვანი სასტუმროს ხმოვანი ასისტენტი.
+SYSTEM_PROMPT = f"""შენ ხარ ქართულენოვანი სასტუმროს ხმოვანი ასისტენტი.
 შენი მიზანია დაეხმარო სტუმარს თავაზიანად და მოკლედ (რადგან პასუხი ხმით უნდა წაიკითხო).
 თუ სტუმარი ითხოვს სერვისს ან მენიუს, გამოიყენე შესაბამისი ხელსაწყო (Tool).
-თუ ხელსაწყომ დააბრუნა შეცდომა, თავაზიანად აუხსენი სტუმარს და შესთავაზე ალტერნატივა."""
+თუ ხელსაწყომ დააბრუნა შეცდომა, თავაზიანად აუხსენი სტუმარს და შესთავაზე ალტერნატივა.
+ერთ შეკვეთაში მაქსიმუმ {MAX_QUANTITY} ერთეულია. თუ სტუმარი მეტს ითხოვს, ჯერ აუხსენი ლიმიტი და ჰკითხე.
+შეკვეთა ყოველთვის სტუმრის საკუთარ ოთახში მიდის, სხვა ოთახში შეკვეთა შეუძლებელია."""
 
 # --- კვანძები (NODES) ---
 
@@ -40,15 +42,20 @@ def tool_node(state: HotelAgentState):
     last_message = state["messages"][-1]
     new_messages = []
     error_count = state.get("tool_error_count", 0)
+    room_number = state.get("room_number") or "უცნობი"
     
     for tool_call in last_message.tool_calls:
         tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
+        tool_args = dict(tool_call["args"])
         selected_tool = tools_by_name.get(tool_name)
         
         try:
             if selected_tool is None:
                 raise ValueError(f"უცნობი ხელსაწყო: '{tool_name}'")
+            
+            # ოთახის ნომერი State-იდან მოდის და არა LLM-ისგან
+            if tool_name == "order_room_service":
+                tool_args["room_number"] = room_number
             
             # ვცდილობთ Tool-ის გაშვებას
             observation = selected_tool.invoke(tool_args)
