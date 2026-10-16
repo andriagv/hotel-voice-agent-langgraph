@@ -12,3 +12,5 @@ class HotelAgentState(TypedDict):
     # ქვემოთ მოცემული მთვლელები ყოველ ახალ შეკითხვაზე ნულდება (input_guard)
     tool_error_count: int            # tool-ის ჩავარდნების რაოდენობა
     agent_steps: int                 # LLM-ის გამოძახებები ამ შეკითხვაზე (ციკლის ლიმიტი)
+    verify_attempts: int             # verifier-მა რამდენჯერ დააბრუნა პასუხი გადასაწერად
+    verifier_feedback: Optional[str] # რატომ უარყო verifier-მა ბოლო პასუხი
